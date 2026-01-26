@@ -1,0 +1,13 @@
+.env
+token.json
+credentials.json
+
+*.__pychache__
+.__pychache__
+__pychache__
+__pychache__/*
+/*.__pychache__
+__pychache__/
+*.py[co]
+.vscode
+.vscode/*
