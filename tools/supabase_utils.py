@@ -16,14 +16,14 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Helpers
 # -------------------------
 def is_employee(email: str) -> bool:
-    response = supabase.table("employees").select("email").eq("email", email).execute()
+    response = supabase.table("employees").select("company_email").eq("company_email", email).execute()
     return len(response.data) > 0
 
 def get_employee_details(email: str) -> dict:
-    employee_data = supabase.table("employees").select("*").eq("email", "revel@hassanrevel.com").execute().data[0]
+    employee_data = supabase.table("employees").select("*").eq("company_email", email).execute().data[0]
 
     employee_leaves_data = supabase.table("employee_leaves").select("*").eq("employee_id", employee_data['id']).execute().data
-    remaining_employee_leaves = employee_data['annual_leaves'] - len([l['status']=='approved' for l in employee_leaves_data])
+    remaining_employee_leaves = employee_data['annual_leave_entitlement'] - len([l['status']=='approved' for l in employee_leaves_data])
 
     employee_data['remaining_leaves'] = remaining_employee_leaves
 

@@ -1,5 +1,4 @@
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
 from email.mime.text import MIMEText
 import base64
 from llm import is_leave_request, extract_leave_metadata, decide_leave_application, calculate_salary_deduction, \
@@ -12,7 +11,7 @@ creds = get_creds()
 service = build("gmail", "v1", credentials=creds)
 
 
-ALLOWED_DOMAINS = ["mislsolutions.com", "hassanrevel.com", "icloud.com"]
+ALLOWED_DOMAINS = ["misl.org", "hassanrevel.com", "icloud.com"]
 PROCESSED_LABEL_NAME = "MISL_PROCESSED"
 
 
@@ -42,28 +41,6 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
     except Exception as e:
         print(f"⚠️ Failed to send email to {to_email}: {e}")
         return False
-    
-def get_or_create_label(service, label_name: str) -> str:
-    labels = service.users().labels().list(userId="me").execute().get("labels", [])
-
-    for label in labels:
-        if label["name"] == label_name:
-            return label["id"]
-
-    label_body = {
-        "name": label_name,
-        "labelListVisibility": "labelShow",
-        "messageListVisibility": "show",
-    }
-
-    created = service.users().labels().create(
-        userId="me",
-        body=label_body
-    ).execute()
-
-    return created["id"]
-
-PROCESSED_LABEL_ID = get_or_create_label(service, PROCESSED_LABEL_NAME)
 
 # -------------------------
 # Main Workflow
@@ -71,14 +48,11 @@ PROCESSED_LABEL_ID = get_or_create_label(service, PROCESSED_LABEL_NAME)
 def process_incoming_emails(max_results: int = 10):
     results = service.users().messages().list(
                     userId="me",
-                    q="-label:MISL_PROCESSED",
-                    maxResults=10
+                    maxResults=max_results
                 ).execute()
     messages = results.get("messages", [])
 
     for msg in messages:
-        service.users().messages().modify(userId="me", id=msg["id"], 
-                                          body={"addLabelIds": [PROCESSED_LABEL_ID]}).execute()
         msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
         headers = msg_data["payload"]["headers"]
         sender_email_subject = next((h["value"] for h in headers if h["name"] == "Subject"), "")
@@ -107,10 +81,10 @@ def process_incoming_emails(max_results: int = 10):
         leave_meta_info = extract_leave_metadata(sender_email_subject, sender_email_body)
 
         leave_decision = decide_leave_application(
-            employee_name=employee['name'],
+            employee_name=employee['full_name'],
             employee_position=employee["position"],
-            employee_salary=employee["salary"],
-            annual_leaves=employee["annual_leaves"],
+            employee_salary=employee["basic_salary"],
+            annual_leaves=employee["annual_leave_entitlement"],
             remaining_leaves=employee["remaining_leaves"],
 
             leave_reason=leave_meta_info.get("leave_reason"),
@@ -123,21 +97,21 @@ def process_incoming_emails(max_results: int = 10):
 
         if leave_decision == "rejected":
             leave_salary_deduction = calculate_salary_deduction(
-                employee_salary=employee["salary"],
+                employee_salary=employee["basic_salary"],
                 leave_start=leave_meta_info["leave_start"],
                 leave_end=leave_meta_info["leave_end"],
                 leave_decision=leave_decision
             )
 
             employee_email = draft_employee_rejection_email(
-                employee_name=employee['name'],
-                employee_position=employee['position'],
-                employee_salary=employee['salary'],
-                annual_leaves=employee['annual_leaves'],
-                remaining_leaves=employee['remaining_leaves'],
-                leave_reason=leave_meta_info['leave_reason'],
-                leave_start=leave_meta_info['leave_start'],
-                leave_end=leave_meta_info['leave_end'],
+                employee_name=employee['full_name'],
+                employee_position=employee["position"],
+                employee_salary=employee["basic_salary"],
+                annual_leaves=employee["annual_leave_entitlement"],
+                remaining_leaves=employee["remaining_leaves"],
+                leave_reason=leave_meta_info.get("leave_reason"),
+                leave_start=leave_meta_info.get("leave_start"),
+                leave_end=leave_meta_info.get("leave_end"),
                 email_subject=sender_email_subject,
                 email_body=sender_email_body,
                 leave_decision=leave_decision,
@@ -145,14 +119,14 @@ def process_incoming_emails(max_results: int = 10):
             )
 
             finance_email = draft_finance_deduction_email(
-                employee_name=employee['name'],
-                employee_position=employee['position'],
-                employee_salary=employee['salary'],
-                annual_leaves=employee['annual_leaves'],
-                remaining_leaves=employee['remaining_leaves'],
-                leave_reason=leave_meta_info['leave_reason'],
-                leave_start=leave_meta_info['leave_start'],
-                leave_end=leave_meta_info['leave_end'],
+                employee_name=employee['full_name'],
+                employee_position=employee["position"],
+                employee_salary=employee["basic_salary"],
+                annual_leaves=employee["annual_leave_entitlement"],
+                remaining_leaves=employee["remaining_leaves"],
+                leave_reason=leave_meta_info.get("leave_reason"),
+                leave_start=leave_meta_info.get("leave_start"),
+                leave_end=leave_meta_info.get("leave_end"),
                 email_subject=sender_email_subject,
                 email_body=sender_email_body,
                 leave_decision=leave_decision,
@@ -171,7 +145,7 @@ def process_incoming_emails(max_results: int = 10):
                 print("✅ Leave request recorded in Supabase.")
     
                 # Send employee email
-                send_email(employee['email'], employee_email['subject'], employee_email['body'])
+                send_email(employee['company_email'], employee_email['subject'], employee_email['body'])
                 
                 # Send finance email
                 send_email("hassanrevelai@icloud.com", finance_email['subject'], finance_email['body'])
