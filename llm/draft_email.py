@@ -21,6 +21,7 @@ def draft_employee_rejection_email(
     employee_salary: float,
     annual_leaves: int,
     remaining_leaves: int,
+    leave_category: str | None,
     leave_reason: str | None,
     leave_start: str | None,
     leave_end: str | None,
@@ -54,6 +55,7 @@ Annual Leaves: {annual_leaves}
 Remaining Leaves: {remaining_leaves}
 
 Leave Info:
+Category: {leave_category}
 Reason: {leave_reason}
 Start Date: {leave_start}
 End Date: {leave_end}
@@ -95,6 +97,7 @@ def draft_finance_deduction_email(
     employee_salary: float,
     annual_leaves: int,
     remaining_leaves: int,
+    leave_category: str | None,
     leave_reason: str | None,
     leave_start: str | None,
     leave_end: str | None,
@@ -124,6 +127,7 @@ Position: {employee_position}
 Salary: {employee_salary}
 
 Leave Info:
+Category: {leave_category}
 Reason: {leave_reason}
 Start Date: {leave_start}
 End Date: {leave_end}

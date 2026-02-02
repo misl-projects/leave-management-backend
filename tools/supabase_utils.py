@@ -29,24 +29,28 @@ def get_employee_details(email: str) -> dict:
 
     return employee_data
 
+def calculate_prior_notice_days(leave_start: str) -> int:
+    today = datetime.today().date()
+    leave_start_date = datetime.strptime(leave_start, "%Y-%m-%d").date()
+
+    prior_notice = (leave_start_date - today).days
+    return prior_notice
 
 def create_employee_leave(
     employee_id: str,
     leave_start: str,  # YYYY-MM-DD
     leave_end: str,    # YYYY-MM-DD
     status: str = "pending",
-    prior_notice_days: int = 3,
+    leave_category: str | None = None,
     reason: str | None = None
 ) -> bool:
-    """
-    Inserts a leave request into employee_leaves if not already present.
-
-    Returns True if inserted, False if duplicate exists.
-    """
 
     # Normalize new leave dates
     leave_start_date = datetime.strptime(leave_start, "%Y-%m-%d").date()
     leave_end_date = datetime.strptime(leave_end, "%Y-%m-%d").date()
+
+    # Calculate prior notice
+    prior_notice_days = calculate_prior_notice_days(leave_start)
 
     # Fetch existing leaves for the employee
     existing_leaves = supabase.table("employee_leaves")\
@@ -61,7 +65,7 @@ def create_employee_leave(
 
         # Check for overlapping leave
         if leave_start_date <= existing_end and leave_end_date >= existing_start:
-            return False  # Duplicate / overlapping leave exists
+            return False
 
     # Insert new leave
     supabase.table("employee_leaves").insert({
@@ -69,6 +73,7 @@ def create_employee_leave(
         "leave_start": leave_start,
         "leave_end": leave_end,
         "status": status,
+        "leave_category": leave_category,
         "prior_notice_days": prior_notice_days,
         "reason": reason
     }).execute()

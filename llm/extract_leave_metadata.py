@@ -13,6 +13,24 @@ llm = ChatGroq(
     max_tokens=1000
 )
 
+LEAVE_CATEGORIES = [
+    "Sick",
+    "Casual",
+    "Annual"
+]
+
+LEAVE_REASONS = [
+    "Medical",
+    "Accident",
+    "Family",
+    "Personal",
+    "Bereavement",
+    "Travel",
+    "Maternity",
+    "Paternity",
+    "Miscellaneous"
+]
+
 def extract_leave_metadata(
     email_subject: str,
     email_body: str
@@ -20,12 +38,7 @@ def extract_leave_metadata(
     """
     Extracts leave metadata from an employee's email.
     Resolves relative dates like today / tomorrow.
-    Returns:
-    {
-        leave_reason: str | null,
-        leave_start: str | null (YYYY-MM-DD),
-        leave_end: str | null (YYYY-MM-DD)
-    }
+    Returns both leave_category and leave_reason.
     """
 
     today = date.today().isoformat()
@@ -37,20 +50,28 @@ Today's date is: {today}
 
 Your task is to extract structured leave request data from an email.
 
-DATE HANDLING RULES (IMPORTANT):
-- If the email mentions "today", use today's date.
-- If the email mentions "tomorrow", use today's date + 1 day.
-- If the email mentions a single day (e.g. "I can't come today"),
-  treat it as both leave_start and leave_end.
-- If a date range is mentioned, extract both start and end.
-- Resolve relative dates into exact calendar dates.
-- Convert all dates to ISO format: YYYY-MM-DD.
+DATE HANDLING RULES:
+- "today" → today's date
+- "tomorrow" → today's date + 1 day
+- Single day → both leave_start and leave_end
+- Date ranges → extract start and end
+- Convert all dates to ISO format YYYY-MM-DD
 
-GENERAL RULES:
-- Do NOT make HR decisions.
-- Do NOT invent dates.
-- If a value is truly missing, return null.
-- Ignore greetings, signatures, and politeness language.
+LEAVE CATEGORY RULES:
+- leave_category MUST be one of:
+{', '.join(LEAVE_CATEGORIES)}
+- Choose based on company policy and intent:
+  - Health-related → Sick
+  - Short personal needs → Casual
+  - Planned vacation / long leave → Annual
+- Do NOT invent categories.
+
+LEAVE REASON RULES:
+- leave_reason MUST be one of:
+{', '.join(LEAVE_REASONS)}
+- Choose the closest matching reason from the email.
+- Do NOT invent reasons.
+- If unclear, use Miscellaneous.
 
 Email Subject:
 {email_subject}
@@ -61,6 +82,7 @@ Email Body:
 Return ONLY valid JSON in this exact format:
 
 {{
+  "leave_category": string or null,
   "leave_reason": string or null,
   "leave_start": string or null,
   "leave_end": string or null

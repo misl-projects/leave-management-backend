@@ -19,6 +19,7 @@ def decide_leave_application(
     employee_salary: float,
     annual_leaves: int,
     remaining_leaves: int,
+    leave_category: str | None,
     leave_reason: str | None,
     leave_start: str | None,  # YYYY-MM-DD
     leave_end: str | None,    # YYYY-MM-DD
@@ -53,6 +54,7 @@ Remaining Leaves: {remaining_leaves}
 --------------------------------
 LEAVE DETAILS
 --------------------------------
+Leave Category: {leave_category}
 Leave Reason: {leave_reason}
 Leave Start Date: {leave_start}
 Leave End Date: {leave_end}

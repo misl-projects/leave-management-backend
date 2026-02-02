@@ -87,6 +87,7 @@ def process_incoming_emails(max_results: int = 10):
             annual_leaves=employee["annual_leave_entitlement"],
             remaining_leaves=employee["remaining_leaves"],
 
+            leave_category=leave_meta_info.get("leave_category"),
             leave_reason=leave_meta_info.get("leave_reason"),
             leave_start=leave_meta_info.get("leave_start"),
             leave_end=leave_meta_info.get("leave_end"),
@@ -110,6 +111,7 @@ def process_incoming_emails(max_results: int = 10):
                 annual_leaves=employee["annual_leave_entitlement"],
                 remaining_leaves=employee["remaining_leaves"],
                 leave_reason=leave_meta_info.get("leave_reason"),
+                leave_reason=leave_meta_info.get("leave_reason"),
                 leave_start=leave_meta_info.get("leave_start"),
                 leave_end=leave_meta_info.get("leave_end"),
                 email_subject=sender_email_subject,
@@ -124,6 +126,7 @@ def process_incoming_emails(max_results: int = 10):
                 employee_salary=employee["basic_salary"],
                 annual_leaves=employee["annual_leave_entitlement"],
                 remaining_leaves=employee["remaining_leaves"],
+                leave_category=leave_meta_info.get("leave_category"),
                 leave_reason=leave_meta_info.get("leave_reason"),
                 leave_start=leave_meta_info.get("leave_start"),
                 leave_end=leave_meta_info.get("leave_end"),
@@ -138,6 +141,7 @@ def process_incoming_emails(max_results: int = 10):
                 leave_start=leave_meta_info['leave_start'],
                 leave_end=leave_meta_info['leave_end'],
                 status=leave_decision,
+                category=leave_meta_info.get('leave_category'),
                 reason=leave_meta_info.get('leave_reason')
             )
 
