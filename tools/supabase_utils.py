@@ -1,6 +1,6 @@
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, date
 import os
 
 load_dotenv()
@@ -23,9 +23,29 @@ def get_employee_details(email: str) -> dict:
     employee_data = supabase.table("employees").select("*").eq("company_email", email).execute().data[0]
 
     employee_leaves_data = supabase.table("employee_leaves").select("*").eq("employee_id", employee_data['id']).execute().data
-    remaining_employee_leaves = employee_data['annual_leave_entitlement'] - len([l['status']=='approved' for l in employee_leaves_data])
+    annual_entitlement = int(employee_data.get("annual_leave_entitlement") or 0)
+    current_year = date.today().year
+    year_start = date(current_year, 1, 1)
+    year_end = date(current_year, 12, 31)
 
-    employee_data['remaining_leaves'] = remaining_employee_leaves
+    approved_days_current_year = 0
+    for leave in employee_leaves_data:
+        if leave.get("status") != "approved":
+            continue
+
+        leave_start = date.fromisoformat(str(leave.get("leave_start")))
+        leave_end = date.fromisoformat(str(leave.get("leave_end")))
+
+        overlap_start = max(leave_start, year_start)
+        overlap_end = min(leave_end, year_end)
+
+        if overlap_start <= overlap_end:
+            approved_days_current_year += (overlap_end - overlap_start).days + 1
+
+    remaining_employee_leaves = max(annual_entitlement - approved_days_current_year, 0)
+
+    employee_data["approved_leave_days_current_year"] = approved_days_current_year
+    employee_data["remaining_leaves"] = remaining_employee_leaves
 
     return employee_data
 

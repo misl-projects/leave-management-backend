@@ -1,7 +1,7 @@
 from datetime import datetime
 
 def calculate_salary_deduction(
-    employee_salary: float,
+    employee_salary: float | int | None,
     leave_start: str,
     leave_end: str,
     leave_decision: str
@@ -25,7 +25,11 @@ def calculate_salary_deduction(
         return 0.0
 
     # Salary calculation
-    daily_salary = employee_salary / 30
+    normalized_salary = float(employee_salary or 0)
+    if normalized_salary <= 0:
+        return 0.0
+
+    daily_salary = normalized_salary / 30
     deduction = daily_salary * leave_days
 
     # Rounded for payroll safety

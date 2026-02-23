@@ -13,9 +13,9 @@ llm = ChatGroq(
 )
 
 # -------------------------
-# 1️⃣ Employee Rejection Email
+# 1️⃣ Employee Decision Email (Approved / Pending / Rejected)
 # -------------------------
-def draft_employee_rejection_email(
+def draft_employee_decision_email(
     employee_name: str,
     employee_position: str,
     employee_salary: float,
@@ -28,24 +28,38 @@ def draft_employee_rejection_email(
     email_subject: str,
     email_body: str,
     leave_decision: str,
-    leave_salary_deduction: float,
+    leave_salary_deduction: float = 0.0,
+    prior_notice_days: int | None = None,
     max_retries: int = 3
 ) -> dict:
     """
-    Drafts a polite HR email to the employee explaining leave rejection due to insufficient prior notice.
+    Drafts a polite HR email to the employee for approved / pending / rejected decisions.
     Returns a dict with 'subject' and 'body'.
-    If LLM fails to return valid JSON, uses a fallback email.
+    If LLM fails to return valid JSON, uses a deterministic fallback email.
     """
+    normalized_decision = (leave_decision or "pending").strip().lower()
+    if normalized_decision not in {"approved", "pending", "rejected"}:
+        normalized_decision = "pending"
 
+    policy_line = "Company policy requires a minimum of 3 calendar days prior notice for planned leave."
+    salary_note_rule = (
+        "If decision is rejected, include a gentle explanatory note about payroll deduction amount "
+        f"({leave_salary_deduction:.2f}) and ask employee to contact HR if they want reconsideration."
+    )
     prompt = f"""
 You are an HR assistant drafting an email to an employee.
 
 Rules:
-- Leave request is rejected due to insufficient prior notice.
+- Decision can be approved, pending, or rejected.
+- Tone must be polite, supportive, suggestive, and explanatory (NOT harsh).
 - Include remaining leaves in the email.
-- Reference the leave dates and reason.
-- Use professional, calm, and neutral tone.
-- Do NOT include salary deduction in employee email.
+- Reference leave dates and reason.
+- Treat this line as fixed policy: "{policy_line}"
+- NEVER mention "48 hours". ALWAYS use "3 calendar days prior notice" if short-notice policy is referenced.
+- If approved: appreciate timely notice and confirm acceptance.
+- If pending: explain request needs admin review and final confirmation will follow.
+- If rejected: explain insufficient notice and the policy impact in a respectful way.
+- {salary_note_rule}
 - Output ONLY valid JSON with keys "subject" and "body".
 
 Employee Info:
@@ -65,7 +79,8 @@ Subject: {email_subject}
 Body:
 {email_body}
 
-HR Decision: {leave_decision}
+HR Decision: {normalized_decision}
+Prior Notice (days): {prior_notice_days}
 """
 
     for attempt in range(max_retries):
@@ -77,15 +92,76 @@ HR Decision: {leave_decision}
             print(f"⚠️ LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
             sleep(1)  # short delay before retry
 
-    # fallback if LLM keeps failing
+    # Fallback if LLM keeps failing
     fallback_subject = f"Leave Request Update: {leave_start} to {leave_end}"
-    fallback_body = (
-        f"Dear {employee_name},\n\n"
-        f"Your leave request from {leave_start} to {leave_end} cannot be accepted due to insufficient prior notice.\n"
-        f"You have {remaining_leaves} leave(s) remaining.\n\n"
-        "Please reach out to HR for any clarification.\n\nBest regards,\nHR Department"
-    )
+    if normalized_decision == "approved":
+        fallback_body = (
+            f"Dear {employee_name},\n\n"
+            f"Your leave request ({leave_start} to {leave_end}) has been approved.\n"
+            f"Reason noted: {leave_reason or 'N/A'}.\n"
+            f"You currently have {remaining_leaves} leave(s) remaining.\n\n"
+            "Thank you for informing the team in advance.\n\n"
+            "Best regards,\nHR Department"
+        )
+    elif normalized_decision == "rejected":
+        fallback_body = (
+            f"Dear {employee_name},\n\n"
+            f"Thank you for your leave request ({leave_start} to {leave_end}). "
+            "At this time, we are unable to approve it because the request was submitted with insufficient prior notice.\n"
+            "As per policy, planned leave should be notified at least 3 calendar days in advance.\n"
+            f"Estimated payroll impact for this period is {leave_salary_deduction:.2f}.\n"
+            "If you would like us to reconsider based on exceptional circumstances, please reply to this email.\n"
+            f"You currently have {remaining_leaves} leave(s) remaining.\n\n"
+            "Best regards,\nHR Department"
+        )
+    else:  # pending
+        fallback_body = (
+            f"Dear {employee_name},\n\n"
+            f"Your leave request ({leave_start} to {leave_end}) has been placed in pending status.\n"
+            "The request needs a second review by admin/HR before a final decision is made.\n"
+            f"Reason noted: {leave_reason or 'N/A'}.\n"
+            f"You currently have {remaining_leaves} leave(s) remaining.\n\n"
+            "We will share the final update shortly.\n\n"
+            "Best regards,\nHR Department"
+        )
     return {"subject": fallback_subject, "body": fallback_body}
+
+
+# Backward-compatible wrapper
+def draft_employee_rejection_email(
+    employee_name: str,
+    employee_position: str,
+    employee_salary: float,
+    annual_leaves: int,
+    remaining_leaves: int,
+    leave_category: str | None,
+    leave_reason: str | None,
+    leave_start: str | None,
+    leave_end: str | None,
+    email_subject: str,
+    email_body: str,
+    leave_decision: str,
+    leave_salary_deduction: float,
+    prior_notice_days: int | None = None,
+    max_retries: int = 3
+) -> dict:
+    return draft_employee_decision_email(
+        employee_name=employee_name,
+        employee_position=employee_position,
+        employee_salary=employee_salary,
+        annual_leaves=annual_leaves,
+        remaining_leaves=remaining_leaves,
+        leave_category=leave_category,
+        leave_reason=leave_reason,
+        leave_start=leave_start,
+        leave_end=leave_end,
+        email_subject=email_subject,
+        email_body=email_body,
+        leave_decision=leave_decision,
+        leave_salary_deduction=leave_salary_deduction,
+        prior_notice_days=prior_notice_days,
+        max_retries=max_retries,
+    )
 
 
 # -------------------------
@@ -118,7 +194,8 @@ Rules:
 - Triggered when leave is rejected.
 - Include employee name, position, leave dates, and days.
 - Include amount to deduct from salary: {leave_salary_deduction}.
-- Use formal, neutral, and direct tone.
+- Use formal, calm, and explanatory tone (not harsh).
+- Mention this is policy-based and open for HR re-evaluation if justified.
 - Output ONLY valid JSON with keys "subject" and "body".
 
 Employee Info:
@@ -151,10 +228,11 @@ Salary Deduction: {leave_salary_deduction}
     # fallback
     body = (
         f"Dear Finance Team,\n\n"
-        f"The leave request submitted by {employee_name}, {employee_position}, "
-        f"from {leave_start} to {leave_end} "
-        f"has been rejected. Deduct amount: {leave_salary_deduction:.2f} from salary.\n\n"
-        "Please process at the next payroll cycle.\n\nRegards,\nHR"
+        f"Please note that the leave request submitted by {employee_name} ({employee_position}) "
+        f"for {leave_start} to {leave_end} has been rejected as per notice policy.\n"
+        f"Recommended payroll adjustment: {leave_salary_deduction:.2f}.\n\n"
+        "Please process this in the next payroll cycle. If HR communicates a reconsideration, "
+        "we will share an updated instruction.\n\nRegards,\nHR"
     )
     subject = f"Leave Request Rejection – {employee_name}"
     return {"subject": subject, "body": body}

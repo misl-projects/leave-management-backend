@@ -23,6 +23,8 @@ def decide_leave_application(
     leave_reason: str | None,
     leave_start: str | None,  # YYYY-MM-DD
     leave_end: str | None,    # YYYY-MM-DD
+    prior_notice_days: int | None,
+    leave_days: int | None,
     email_subject: str,
     email_body: str
 ) -> str:
@@ -71,42 +73,34 @@ Body:
 DECISION RULES (STRICT)
 --------------------------------
 
-1. If remaining_leaves <= 0 → REJECT
+1. If remaining_leaves <= 0 → REJECT.
 
-2. If leave_start or leave_end is missing → PENDING
+2. If leave_start or leave_end is missing OR unclear → PENDING.
 
-3. Prior notice rule:
-   - If leave starts LESS THAN 3 DAYS from today:
-       - Normally REJECT
-       - EXCEPTIONS:
-         • medical emergency
-         • accident
-         • family emergency
-         • hospitalization
-         • serious illness
-       - In exceptions → PENDING (not auto-approved)
+3. Prior notice policy:
+   - Company policy requires minimum 3 calendar days prior notice.
+   - Computed prior_notice_days is provided below, trust it over any guess.
+   - If prior_notice_days >= 3 and reason is reasonable and leave balance is sufficient -> APPROVE.
+   - If prior_notice_days < 3:
+       - Emergency-like cases (medical emergency, accident, family emergency,
+         hospitalization, serious illness, bereavement) -> PENDING.
+       - Non-emergency cases -> REJECT.
 
-4. If leave reason is vague, unclear, or casual:
+4. If leave reason is vague, unclear, or frivolous:
    Examples:
      - birthday
      - party
      - chilling
      - girlfriend / boyfriend event
-   → REJECT
+   -> REJECT.
 
-5. Senior responsibility rule:
-   - If employee_position contains:
-       "Lead", "Manager", "Head", "Senior"
-   - And leave is sudden + non-emergency
-   → REJECT
+5. If leave_days > remaining_leaves -> REJECT.
 
-6. Approval conditions:
-   - Proper prior notice (≥ 3 days)
-   - Clear reason
-   - Remaining leaves available
-   → APPROVE
+6. If you are unsure at any point -> PENDING.
 
-7. If you are unsure at any point → PENDING
+Computed Context:
+- prior_notice_days: {prior_notice_days}
+- leave_days: {leave_days}
 
 --------------------------------
 IMPORTANT
@@ -124,4 +118,3 @@ IMPORTANT
         return "pending"
 
     return decision
-
