@@ -236,3 +236,78 @@ Salary Deduction: {leave_salary_deduction}
     )
     subject = f"Leave Request Rejection – {employee_name}"
     return {"subject": subject, "body": body}
+
+
+def draft_admin_override_email(
+    employee_name: str,
+    employee_position: str,
+    leave_start: str | None,
+    leave_end: str | None,
+    leave_reason: str | None,
+    old_status: str,
+    new_status: str,
+    max_retries: int = 3
+) -> dict:
+    """
+    Drafts a polite employee-facing email when admin changes leave status manually.
+    """
+    normalized_old = (old_status or "").strip().lower()
+    normalized_new = (new_status or "").strip().lower()
+    prompt = f"""
+You are an HR assistant drafting an email to an employee.
+
+Rules:
+- Explain that admin completed a manual review and updated a previous leave decision.
+- Previous status: {normalized_old}
+- Updated status: {normalized_new}
+- Keep tone respectful, clear, and supportive.
+- If updated status is rejected, include a gentle line that employee can reply for clarification.
+- If updated status is approved, include reassurance and appreciation.
+- Output ONLY valid JSON with keys "subject" and "body".
+
+Employee:
+Name: {employee_name}
+Position: {employee_position}
+
+Leave Request:
+Start Date: {leave_start}
+End Date: {leave_end}
+Reason: {leave_reason}
+"""
+    for attempt in range(max_retries):
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = response.content.strip()
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            print(f"⚠️ Override LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
+            sleep(1)
+
+    fallback_subject = f"Leave Request Status Updated ({leave_start} to {leave_end})"
+    if normalized_new == "approved":
+        fallback_body = (
+            f"Dear {employee_name},\n\n"
+            f"After an additional admin review, your leave request ({leave_start} to {leave_end}) "
+            "has been updated to approved.\n"
+            f"Reason noted: {leave_reason or 'N/A'}.\n\n"
+            "Thank you for your patience.\n\n"
+            "Best regards,\nHR Department"
+        )
+    elif normalized_new == "rejected":
+        fallback_body = (
+            f"Dear {employee_name},\n\n"
+            f"After an additional admin review, your leave request ({leave_start} to {leave_end}) "
+            "has been updated to rejected.\n"
+            f"Reason noted: {leave_reason or 'N/A'}.\n"
+            "If you would like clarification or reconsideration, please reply to this email.\n\n"
+            "Best regards,\nHR Department"
+        )
+    else:
+        fallback_body = (
+            f"Dear {employee_name},\n\n"
+            f"After an additional admin review, your leave request ({leave_start} to {leave_end}) "
+            "has been updated and is currently pending.\n"
+            "We will share the final decision shortly.\n\n"
+            "Best regards,\nHR Department"
+        )
+    return {"subject": fallback_subject, "body": fallback_body}

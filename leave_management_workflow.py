@@ -1,10 +1,19 @@
 from googleapiclient.discovery import build
 from email.mime.text import MIMEText
 import base64
+import os
 from datetime import date
 from llm import is_leave_request, extract_leave_metadata, decide_leave_application, calculate_salary_deduction, \
-                        draft_employee_decision_email, draft_finance_deduction_email
-from tools.supabase_utils import is_employee, get_employee_details, create_employee_leave
+                        draft_employee_decision_email, draft_finance_deduction_email, draft_admin_override_email
+from tools.supabase_utils import (
+    is_employee,
+    get_employee_details,
+    create_employee_leave,
+    get_employee_details_by_id,
+    get_leave_by_id,
+    fetch_pending_leave_status_events,
+    update_leave_status_event_result
+)
 from tools.oauth_utils import get_creds
 
 
@@ -14,6 +23,7 @@ service = build("gmail", "v1", credentials=creds)
 
 ALLOWED_DOMAINS = ["misl.org", "hassanrevel.com", "icloud.com"]
 PROCESSED_LABEL_NAME = "MISL_PROCESSED"
+FINANCE_EMAIL = os.environ.get("FINANCE_EMAIL", "hassanrevelai@icloud.com")
 
 
 def decode_body(msg_data: dict) -> str:
@@ -55,6 +65,91 @@ def count_leave_days(start: date, end: date) -> int:
     if end < start:
         return 0
     return (end - start).days + 1
+
+def process_status_change_notifications(limit: int = 20):
+    """
+    Sends employee/finance notifications when admins override leave status in dashboard.
+    Trigger source is the DB queue table `leave_status_change_events`.
+    """
+    events = fetch_pending_leave_status_events(limit=limit)
+    if not events:
+        return
+
+    for event in events:
+        event_id = event["id"]
+        try:
+            leave_id = event.get("leave_id")
+            employee_id = event.get("employee_id")
+            old_status = (event.get("old_status") or "").lower()
+            new_status = (event.get("new_status") or "").lower()
+
+            if not leave_id or not employee_id:
+                update_leave_status_event_result(event_id, "failed", "Missing leave_id or employee_id.")
+                continue
+
+            employee = get_employee_details_by_id(employee_id)
+            leave_row = get_leave_by_id(leave_id)
+            if not employee or not leave_row:
+                update_leave_status_event_result(event_id, "failed", "Missing employee or leave record.")
+                continue
+
+            leave_salary_deduction = calculate_salary_deduction(
+                employee_salary=employee.get("basic_salary") or 0,
+                leave_start=leave_row.get("leave_start"),
+                leave_end=leave_row.get("leave_end"),
+                leave_decision=new_status
+            )
+
+            employee_email = draft_admin_override_email(
+                employee_name=employee.get("full_name") or "Employee",
+                employee_position=employee.get("position") or "",
+                leave_start=leave_row.get("leave_start"),
+                leave_end=leave_row.get("leave_end"),
+                leave_reason=leave_row.get("reason"),
+                old_status=old_status,
+                new_status=new_status
+            )
+
+            employee_sent = send_email(
+                employee.get("company_email"),
+                employee_email.get("subject", "Leave Request Status Updated"),
+                employee_email.get("body", "")
+            )
+            if not employee_sent:
+                update_leave_status_event_result(event_id, "failed", "Employee email sending failed.")
+                continue
+
+            # Notify finance whenever updated status becomes rejected.
+            if new_status == "rejected":
+                finance_email = draft_finance_deduction_email(
+                    employee_name=employee.get("full_name") or "Employee",
+                    employee_position=employee.get("position") or "",
+                    employee_salary=employee.get("basic_salary") or 0,
+                    annual_leaves=employee.get("annual_leave_entitlement") or 0,
+                    remaining_leaves=employee.get("leave_balance") or 0,
+                    leave_category=leave_row.get("leave_category"),
+                    leave_reason=leave_row.get("reason"),
+                    leave_start=leave_row.get("leave_start"),
+                    leave_end=leave_row.get("leave_end"),
+                    email_subject=f"Admin override {old_status} -> {new_status}",
+                    email_body="Admin changed leave request status manually in dashboard.",
+                    leave_decision=new_status,
+                    leave_salary_deduction=leave_salary_deduction
+                )
+                finance_sent = send_email(
+                    FINANCE_EMAIL,
+                    finance_email.get("subject", "Leave Status Updated"),
+                    finance_email.get("body", "")
+                )
+                if not finance_sent:
+                    update_leave_status_event_result(event_id, "failed", "Finance email sending failed.")
+                    continue
+
+            update_leave_status_event_result(event_id, "sent")
+            print(f"✅ Status override notification sent for event #{event_id} ({old_status} -> {new_status})")
+        except Exception as e:
+            update_leave_status_event_result(event_id, "failed", str(e))
+            print(f"⚠️ Failed processing status-change event #{event_id}: {e}")
 
 # -------------------------
 # Main Workflow
@@ -187,7 +282,7 @@ def process_incoming_emails(max_results: int = 10):
                 send_email(employee['company_email'], employee_email['subject'], employee_email['body'])
 
                 if leave_decision == "rejected" and finance_email:
-                    send_email("hassanrevelai@icloud.com", finance_email['subject'], finance_email['body'])
+                    send_email(FINANCE_EMAIL, finance_email['subject'], finance_email['body'])
             else:
                 print("ℹ️ Identical leave request fingerprint found. Skipping emails and insert.")
 

@@ -99,3 +99,40 @@ def create_employee_leave(
     }).execute()
 
     return True
+
+def get_employee_details_by_id(employee_id: str) -> dict | None:
+    response = supabase.table("employees").select("*").eq("id", employee_id).limit(1).execute()
+    if not response.data:
+        return None
+    return response.data[0]
+
+def get_leave_by_id(leave_id: str) -> dict | None:
+    response = supabase.table("employee_leaves").select("*").eq("id", leave_id).limit(1).execute()
+    if not response.data:
+        return None
+    return response.data[0]
+
+def fetch_pending_leave_status_events(limit: int = 20) -> list[dict]:
+    response = (
+        supabase.table("leave_status_change_events")
+        .select("*")
+        .eq("notification_status", "pending")
+        .is_("notified_at", "null")
+        .order("changed_at", desc=False)
+        .limit(limit)
+        .execute()
+    )
+    return response.data or []
+
+def update_leave_status_event_result(
+    event_id: int,
+    notification_status: str,
+    error_message: str | None = None
+) -> None:
+    payload = {
+        "notification_status": notification_status,
+        "notified_at": datetime.utcnow().isoformat()
+    }
+    if error_message:
+        payload["error_message"] = error_message[:1000]
+    supabase.table("leave_status_change_events").update(payload).eq("id", event_id).execute()
