@@ -1,99 +1,139 @@
-# MISL Leave Management Workflow
+# MISL Leave Management Workflow (Backend Automation)
 
-## 📝 Description
-This repository contains the **automated leave management workflow** for MISL. It handles incoming employee leave requests sent via email, applies company leave rules, notifies relevant parties, and logs all leave activity in the database. 
+Python workflow service for automated leave processing in MISL.  
+It reads leave request emails, evaluates policy rules, updates Supabase, and sends notification emails to employees and finance.
 
-This workflow is the backend engine powering the leave approval process and supports the MISL admin dashboard.
+## What This Service Does
 
----
+- Polls Gmail inbox every 15 seconds.
+- Filters senders by allowed domain + verifies employee in Supabase.
+- Detects if an email is actually a leave request.
+- Extracts structured leave metadata from free-text emails.
+- Applies leave decision logic (`approved`, `pending`, `rejected`).
+- Stores leave records in Supabase (`employee_leaves`).
+- Sends decision email to employee.
+- Sends finance deduction email when leave is rejected.
+- Processes admin override events from DB queue and notifies users.
+- Labels processed Gmail messages to avoid duplicate processing.
 
-## ⚙️ Workflow Overview
+## Business Rules Implemented
 
-1.  **Employee Request:** Employees send leave requests via company email specifying dates and reasons.
-2.  **Capture & Processing:** A **FastAPI service** polls for new emails every 15 seconds to:
-    * Validate the sender is a MISL employee.
-    * Detect leave intent and extract metadata (start/end dates, reason).
-    * Fetch employee records (balance, role, salary) from **Supabase**.
-3.  **Business Logic (Python + LLM):** Requests are auto-evaluated based on:
-    * Remaining leave balance and 3-day notice periods.
-    * Date validity.
-    * **LLM Integration:** Used for free-text identification, metadata extraction, and drafting human-readable emails (rejections or finance notices).
-4.  **Automated Responses:**
-    * **Employees:** Receive approval/rejection status and remaining balance.
-    * **Finance:** Receive salary deduction details if applicable via Gmail API.
-5.  **Data Persistence:** All history and master records are stored in **Supabase** as the single source of truth.
+The decision model enforces these core rules:
 
----
+- If employee has no remaining leaves: `rejected`.
+- If leave dates are missing/unclear: `pending`.
+- If prior notice is 3+ calendar days and request is valid: `approved`.
+- If prior notice is under 3 days:
+  - Emergency-like reasons: `pending`.
+  - Non-emergency reasons: `rejected`.
+- If leave days exceed remaining balance: `rejected`.
+- Invalid or unclear cases default to `pending`.
 
-## 📂 Repository Structure
+Salary deduction is calculated only for `rejected` leaves:
+
+- `daily_salary = basic_salary / 30`
+- `deduction = daily_salary * leave_days`
+
+## Stack
+
+- FastAPI
+- APScheduler
+- Gmail API (read/send/label)
+- Supabase Python SDK
+- LangChain + Groq/Gemini model clients
+
+## Repository Structure
 
 ```text
 .
-├── app.py                      # FastAPI app to run the workflow scheduler
-├── leave_management_workflow.py # Main workflow logic (processing & decision making)
-├── llm/                         # AI modules for detection and email drafting
-├── tools/                       # Utilities (Supabase helpers, OAuth credentials)
-├── requirements.txt            # Python dependencies
-├── vercel.json                 # Vercel deployment configuration
-├── .gitignore                  # Ignored files (tokens, env files, etc.)
-└── README.md                   # Project documentation
-
+├── app.py                         # FastAPI app + schedulers
+├── leave_management_workflow.py   # Main email processing + override notifications
+├── llm/
+│   ├── llm.py                     # LLM client setup
+│   ├── is_leave_request.py
+│   ├── extract_leave_metadata.py
+│   ├── decide_leave_application.py
+│   ├── calculate_salary_deduction.py
+│   └── draft_email.py
+├── tools/
+│   ├── oauth_utils.py             # Gmail OAuth token management
+│   └── supabase_utils.py          # DB queries/helpers
+├── requirements.txt
+└── vercel.json
 ```
 
-# Key Files
+## Required Data Model (Supabase)
 
-- **`app.py`**  
-  Runs the FastAPI server and schedules the workflow to process incoming emails periodically.
+This service expects these tables:
 
-- **`leave_management_workflow.py`**  
-  Core workflow logic: processes emails, validates requests, applies business rules, triggers email notifications, and updates the database.
+- `employees`
+- `employee_leaves`
+- `leave_status_change_events` (notification queue for manual status overrides)
 
-- **`llm/`**  
-  Contains modules for:
-  - Detecting leave requests in email text
-  - Extracting leave metadata (start date, end date, reason)
-  - Drafting automated emails to employees and finance
-  - Calculating salary deductions if required
+Expected behavior:
 
-- **`tools/`**  
-  Helper utilities for:
-  - Interacting with Supabase database  
-  - Managing OAuth credentials for Gmail API  
+- Dashboard updates `employee_leaves.status`.
+- A DB trigger/process should insert a queue row into `leave_status_change_events`.
+- This workflow picks queue rows with `notification_status = pending` and sends notifications.
 
-- **`requirements.txt`**  
-  Python packages required to run the workflow, including FastAPI, APScheduler, Google API client, and Supabase SDK.
+## Environment Variables
 
----
+Create `.env` in `misl_workflow`:
 
-## Getting Started
+```bash
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_KEY=YOUR_SUPABASE_SERVICE_OR_SECRET_KEY
+FINANCE_EMAIL=finance@yourcompany.com
+
+# One LLM provider is required by llm/llm.py
+GROQ_API_KEY=YOUR_GROQ_KEY
+# Optional if you switch to Gemini model:
+GOOGLE_API_KEY=YOUR_GOOGLE_GENAI_KEY
+```
+
+## OAuth Files Required (Gmail)
+
+Place these files in the `misl_workflow` root:
+
+- `credentials.json` (Google OAuth client credentials)
+- `token.json` (generated after first auth)
+
+On first run, OAuth flow opens locally and generates `token.json`.
+
+## Installation & Run
 
 1. Install dependencies:
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+pip install -r requirements.txt
+```
 
-2. Add your Google OAuth credentials in a secure api/token.json file.
+2. Ensure env vars + OAuth files are present.
+3. Start the API and scheduler:
 
-3. Update allowed domains in leave_management_workflow.py if needed:
+```bash
+python app.py
+```
 
-    ```bash
-    ALLOWED_DOMAINS = ["mislsolutions.com", "hassanrevel.com"]
-    ```
+Default endpoint:
 
-4. Run the FastAPI workflow service:
+- `GET /` -> health/status response
 
-    ```bash
-    python app.py
-    ```
+## Scheduled Jobs
 
+Defined in `app.py`:
+
+- `process_incoming_emails` every 15 seconds
+- `process_status_change_notifications` every 15 seconds
+
+## Deployment
+
+- `vercel.json` is configured to deploy `app.py` as a Python serverless function.
+- If long-running scheduled background work is required, prefer a persistent runtime (VM/container) instead of pure serverless execution.
 
 ## Notes
 
-- Only approved company domains can submit leave requests.
-
-- Emails are automatically labeled in Gmail once processed.
-
-- All leave actions are logged in Supabase to maintain a single source of truth.
-
-- The workflow is fully automated, but admin approval functionality is supported through the dashboard.
+- Allowed sender domains are hardcoded in `leave_management_workflow.py` (`ALLOWED_DOMAINS`) and should match company policy.
+- Processed messages are labeled using Gmail label `MISL_LEAVE_PROCESSED`.
+- Duplicate/overlapping leave ranges for the same employee are blocked before insert.
+- Existing `requirements.txt` may need `python-dotenv` if not already installed in your runtime.
