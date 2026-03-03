@@ -1,16 +1,6 @@
-from langchain_groq import ChatGroq
 from langchain.messages import HumanMessage
-import json
 from datetime import date
-from dotenv import load_dotenv
-
-load_dotenv()
-
-llm = ChatGroq(
-    model="openai/gpt-oss-20b",
-    temperature=0,
-    max_tokens=500
-)
+from .llm import llm
 
 
 def decide_leave_application(

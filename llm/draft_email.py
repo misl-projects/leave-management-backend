@@ -1,16 +1,7 @@
-from langchain_groq import ChatGroq
 from langchain.messages import HumanMessage
-from dotenv import load_dotenv
 from time import sleep
 import json
-
-load_dotenv()
-
-llm = ChatGroq(
-    model="openai/gpt-oss-20b",
-    temperature=0,
-    max_tokens=1000
-)
+from .llm import llm
 
 # -------------------------
 # 1️⃣ Employee Decision Email (Approved / Pending / Rejected)
