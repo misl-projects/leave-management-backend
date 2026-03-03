@@ -22,8 +22,9 @@ service = build("gmail", "v1", credentials=creds)
 
 
 ALLOWED_DOMAINS = ["misl.org", "hassanrevel.com", "icloud.com"]
-PROCESSED_LABEL_NAME = "MISL_PROCESSED"
+PROCESSED_LABEL_NAME = "MISL_LEAVE_PROCESSED"
 FINANCE_EMAIL = os.environ.get("FINANCE_EMAIL", "hassanrevelai@icloud.com")
+_processed_label_id_cache: str | None = None
 
 
 def decode_body(msg_data: dict) -> str:
@@ -52,6 +53,45 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
     except Exception as e:
         print(f"⚠️ Failed to send email to {to_email}: {e}")
         return False
+
+def get_or_create_processed_label_id() -> str | None:
+    global _processed_label_id_cache
+    if _processed_label_id_cache:
+        return _processed_label_id_cache
+
+    try:
+        labels = service.users().labels().list(userId="me").execute().get("labels", [])
+        for label in labels:
+            if label.get("name") == PROCESSED_LABEL_NAME:
+                _processed_label_id_cache = label.get("id")
+                return _processed_label_id_cache
+
+        created = service.users().labels().create(
+            userId="me",
+            body={
+                "name": PROCESSED_LABEL_NAME,
+                "labelListVisibility": "labelShow",
+                "messageListVisibility": "show"
+            }
+        ).execute()
+        _processed_label_id_cache = created.get("id")
+        print(f"✅ Created Gmail label: {PROCESSED_LABEL_NAME}")
+        return _processed_label_id_cache
+    except Exception as e:
+        print(f"⚠️ Could not get/create processed label {PROCESSED_LABEL_NAME}: {e}")
+        return None
+
+def mark_message_processed(message_id: str, processed_label_id: str | None) -> None:
+    if not processed_label_id:
+        return
+    try:
+        service.users().messages().modify(
+            userId="me",
+            id=message_id,
+            body={"addLabelIds": [processed_label_id]}
+        ).execute()
+    except Exception as e:
+        print(f"⚠️ Failed to label message {message_id} as processed: {e}")
 
 def parse_iso_date(value: str | None) -> date | None:
     if not value:
@@ -155,6 +195,7 @@ def process_status_change_notifications(limit: int = 20):
 # Main Workflow
 # -------------------------
 def process_incoming_emails(max_results: int = 10):
+    processed_label_id = get_or_create_processed_label_id()
     results = service.users().messages().list(
                     userId="me",
                     maxResults=max_results
@@ -162,8 +203,13 @@ def process_incoming_emails(max_results: int = 10):
     messages = results.get("messages", [])
 
     for msg in messages:
+        message_id = msg["id"]
         try:
-            msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
+            msg_data = service.users().messages().get(userId="me", id=message_id).execute()
+            label_ids = set(msg_data.get("labelIds", []))
+            if processed_label_id and processed_label_id in label_ids:
+                continue
+
             headers = msg_data["payload"]["headers"]
             sender_email_subject = next((h["value"] for h in headers if h["name"] == "Subject"), "")
             sender = next((h["value"] for h in headers if h["name"] == "From"), "")
@@ -173,17 +219,20 @@ def process_incoming_emails(max_results: int = 10):
             # 1. Validate domain
             domain = sender_email_address.split("@")[-1]
             if domain not in ALLOWED_DOMAINS:
+                mark_message_processed(message_id, processed_label_id)
                 continue
 
             # 2. Validate employee
             if not is_employee(sender_email_address):
                 print(f"⚠️ {sender_email_address} is NOT an employee, skipping...")
+                mark_message_processed(message_id, processed_label_id)
                 continue
 
             sender_email_body = decode_body(msg_data)
 
             # 3. Check if leave request
             if not is_leave_request(sender_email_subject, sender_email_body):
+                mark_message_processed(message_id, processed_label_id)
                 continue
 
             employee = get_employee_details(sender_email_address)
@@ -196,15 +245,18 @@ def process_incoming_emails(max_results: int = 10):
 
             if not leave_start_date or not leave_end_date:
                 print("⚠️ Missing leave dates, skipping request.")
+                mark_message_processed(message_id, processed_label_id)
                 continue
             if leave_end_date < leave_start_date:
                 print("⚠️ Invalid leave date range, skipping request.")
+                mark_message_processed(message_id, processed_label_id)
                 continue
 
             prior_notice_days = (leave_start_date - date.today()).days
             leave_days = count_leave_days(leave_start_date, leave_end_date)
             if leave_days <= 0:
                 print("⚠️ Invalid leave duration, skipping request.")
+                mark_message_processed(message_id, processed_label_id)
                 continue
 
             leave_decision = decide_leave_application(
@@ -300,6 +352,7 @@ def process_incoming_emails(max_results: int = 10):
                 print("Finance Email:", finance_email)
             print("Leave Request Recorded:", inserted)
             print("------------------------------------------------")
+            mark_message_processed(message_id, processed_label_id)
         except Exception as e:
             print(f"⚠️ Failed processing message {msg.get('id')}: {e}")
             continue
