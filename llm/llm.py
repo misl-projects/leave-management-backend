@@ -21,6 +21,3 @@ gemini_llm = ChatGoogleGenerativeAI(
 
 llm = gemini_llm
 # llm = groq_llm
-
-if __name__ == "__main__":
-    print(llm.invoke("Reply with exactly: ready"))
