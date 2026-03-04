@@ -2,6 +2,7 @@ from googleapiclient.discovery import build
 from email.mime.text import MIMEText
 import base64
 import os
+import threading
 from datetime import date
 from llm import is_leave_request, extract_leave_metadata, decide_leave_application, calculate_salary_deduction, \
                         draft_employee_decision_email, draft_finance_deduction_email, draft_admin_override_email
@@ -17,8 +18,8 @@ from tools.supabase_utils import (
 from tools.oauth_utils import get_creds
 
 
-creds = get_creds()
-service = build("gmail", "v1", credentials=creds)
+_thread_local = threading.local()
+_gmail_service_init_lock = threading.Lock()
 
 
 ALLOWED_DOMAINS = ["misl.org", "hassanrevel.com", "icloud.com"]
@@ -37,8 +38,24 @@ def decode_body(msg_data: dict) -> str:
         body = base64.urlsafe_b64decode(msg_data["payload"]["body"]["data"]).decode()
     return body
 
+def get_gmail_service():
+    """
+    Gmail API client is not guaranteed to be thread-safe.
+    Keep one client per worker thread to avoid SSL transport corruption.
+    """
+    service = getattr(_thread_local, "gmail_service", None)
+    if service is None:
+        with _gmail_service_init_lock:
+            service = getattr(_thread_local, "gmail_service", None)
+            if service is None:
+                creds = get_creds()
+                service = build("gmail", "v1", credentials=creds)
+                _thread_local.gmail_service = service
+    return service
+
 def send_email(to_email: str, subject: str, body: str) -> bool:
     try:
+        service = get_gmail_service()
         # Create MIME message
         message = MIMEText(body)
         message['to'] = to_email
@@ -60,6 +77,7 @@ def get_or_create_processed_label_id() -> str | None:
         return _processed_label_id_cache
 
     try:
+        service = get_gmail_service()
         labels = service.users().labels().list(userId="me").execute().get("labels", [])
         for label in labels:
             if label.get("name") == PROCESSED_LABEL_NAME:
@@ -85,6 +103,7 @@ def mark_message_processed(message_id: str, processed_label_id: str | None) -> N
     if not processed_label_id:
         return
     try:
+        service = get_gmail_service()
         service.users().messages().modify(
             userId="me",
             id=message_id,
@@ -195,6 +214,7 @@ def process_status_change_notifications(limit: int = 20):
 # Main Workflow
 # -------------------------
 def process_incoming_emails(max_results: int = 10):
+    service = get_gmail_service()
     processed_label_id = get_or_create_processed_label_id()
     results = service.users().messages().list(
                     userId="me",
