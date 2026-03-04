@@ -1,7 +1,7 @@
 from langchain.messages import HumanMessage
 from time import sleep
-import json
 from .llm import llm
+from .parse_utils import parse_json_object
 
 def _format_amount(amount: float | int | None) -> str:
     try:
@@ -93,12 +93,11 @@ Prior Notice (days): {prior_notice_days}
 
     for attempt in range(max_retries):
         response = llm.invoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
         try:
-            result = json.loads(content)
+            result = parse_json_object(response.content)
             result["body"] = _strip_currency_symbols(result.get("body", ""))
             return result
-        except json.JSONDecodeError:
+        except Exception:
             print(f"⚠️ LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
             sleep(1)  # short delay before retry
 
@@ -230,10 +229,9 @@ Salary Deduction: {_format_amount(leave_salary_deduction)}
 """
     for attempt in range(max_retries):
         response = llm.invoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
+            return parse_json_object(response.content)
+        except Exception:
             print(f"⚠️ Finance LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
             sleep(1)
     # fallback
@@ -298,12 +296,11 @@ Reason: {leave_reason}
 """
     for attempt in range(max_retries):
         response = llm.invoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
         try:
-            result = json.loads(content)
+            result = parse_json_object(response.content)
             result["body"] = _strip_currency_symbols(result.get("body", ""))
             return result
-        except json.JSONDecodeError:
+        except Exception:
             print(f"⚠️ Override LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
             sleep(1)
 

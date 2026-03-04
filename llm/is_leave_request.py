@@ -1,5 +1,6 @@
 from langchain.messages import HumanMessage
 from .llm import llm
+from .parse_utils import parse_choice
 
 def is_leave_request(subject: str, body: str) -> bool:
     """
@@ -17,4 +18,5 @@ Body:
 {body}
 """
     response = llm.invoke([HumanMessage(content=prompt)])
-    return response.content.strip().upper() == "YES"
+    decision = parse_choice(response.content, allowed={"yes", "no"}, default="no")
+    return decision == "yes"

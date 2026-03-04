@@ -1,7 +1,7 @@
 from langchain.messages import HumanMessage
-import json
 from datetime import date
 from .llm import llm
+from .parse_utils import parse_json_object
 
 LEAVE_CATEGORIES = [
     "Sick",
@@ -80,4 +80,10 @@ Return ONLY valid JSON in this exact format:
 """
 
     response = llm.invoke([HumanMessage(content=prompt)])
-    return json.loads(response.content.strip())
+    parsed = parse_json_object(response.content)
+    return {
+        "leave_category": parsed.get("leave_category"),
+        "leave_reason": parsed.get("leave_reason"),
+        "leave_start": parsed.get("leave_start"),
+        "leave_end": parsed.get("leave_end"),
+    }

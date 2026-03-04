@@ -1,6 +1,7 @@
 from langchain.messages import HumanMessage
 from datetime import date
 from .llm import llm
+from .parse_utils import parse_choice
 
 
 def decide_leave_application(
@@ -102,9 +103,8 @@ IMPORTANT
 """
 
     response = llm.invoke([HumanMessage(content=prompt)])
-    decision = response.content.strip().lower()
-
-    if decision not in {"approved", "pending", "rejected"}:
-        return "pending"
-
-    return decision
+    return parse_choice(
+        response.content,
+        allowed={"approved", "pending", "rejected"},
+        default="pending",
+    )
