@@ -3,6 +3,19 @@ from time import sleep
 import json
 from .llm import llm
 
+def _format_amount(amount: float | int | None) -> str:
+    try:
+        return f"{float(amount or 0):,.2f}"
+    except Exception:
+        return "0.00"
+
+def _strip_currency_symbols(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    for symbol in ("$", "USD ", "usd "):
+        text = text.replace(symbol, "")
+    return text
+
 # -------------------------
 # 1️⃣ Employee Decision Email (Approved / Pending / Rejected)
 # -------------------------
@@ -35,7 +48,7 @@ def draft_employee_decision_email(
     policy_line = "Company policy requires a minimum of 3 calendar days prior notice for planned leave."
     salary_note_rule = (
         "If decision is rejected, include a gentle explanatory note about payroll deduction amount "
-        f"({leave_salary_deduction:.2f}) and ask employee to contact HR if they want reconsideration."
+        f"({_format_amount(leave_salary_deduction)}) and ask employee to contact HR if they want reconsideration."
     )
     prompt = f"""
 You are an HR assistant drafting an email to an employee.
@@ -48,9 +61,13 @@ Rules:
 - Treat this line as fixed policy: "{policy_line}"
 - NEVER mention "48 hours". ALWAYS use "3 calendar days prior notice" if short-notice policy is referenced.
 - If approved: appreciate timely notice and confirm acceptance.
+- If approved: add a warm line encouraging the employee to enjoy time off and return refreshed.
 - If pending: explain request needs admin review and final confirmation will follow.
+- If pending: encourage the employee to wait for the final update and avoid making non-refundable plans until confirmation.
 - If rejected: explain insufficient notice and the policy impact in a respectful way.
+- If rejected: include one gentle behavioral nudge encouraging the employee to reconsider taking leave if possible.
 - {salary_note_rule}
+- Do not use any currency symbol in amounts. Show plain numeric amount only.
 - Output ONLY valid JSON with keys "subject" and "body".
 
 Employee Info:
@@ -78,7 +95,9 @@ Prior Notice (days): {prior_notice_days}
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content.strip()
         try:
-            return json.loads(content)
+            result = json.loads(content)
+            result["body"] = _strip_currency_symbols(result.get("body", ""))
+            return result
         except json.JSONDecodeError:
             print(f"⚠️ LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
             sleep(1)  # short delay before retry
@@ -91,7 +110,7 @@ Prior Notice (days): {prior_notice_days}
             f"Your leave request ({leave_start} to {leave_end}) has been approved.\n"
             f"Reason noted: {leave_reason or 'N/A'}.\n"
             f"You currently have {remaining_leaves} leave(s) remaining.\n\n"
-            "Thank you for informing the team in advance.\n\n"
+            "Thank you for informing the team in advance. Please enjoy your time off and come back refreshed.\n\n"
             "Best regards,\nHR Department"
         )
     elif normalized_decision == "rejected":
@@ -100,7 +119,8 @@ Prior Notice (days): {prior_notice_days}
             f"Thank you for your leave request ({leave_start} to {leave_end}). "
             "At this time, we are unable to approve it because the request was submitted with insufficient prior notice.\n"
             "As per policy, planned leave should be notified at least 3 calendar days in advance.\n"
-            f"Estimated payroll impact for this period is {leave_salary_deduction:.2f}.\n"
+            f"Estimated payroll impact for this period is {_format_amount(leave_salary_deduction)}.\n"
+            "If possible, we encourage you to reconsider taking leave on these dates and remain available for work.\n"
             "If you would like us to reconsider based on exceptional circumstances, please reply to this email.\n"
             f"You currently have {remaining_leaves} leave(s) remaining.\n\n"
             "Best regards,\nHR Department"
@@ -112,7 +132,7 @@ Prior Notice (days): {prior_notice_days}
             "The request needs a second review by admin/HR before a final decision is made.\n"
             f"Reason noted: {leave_reason or 'N/A'}.\n"
             f"You currently have {remaining_leaves} leave(s) remaining.\n\n"
-            "We will share the final update shortly.\n\n"
+            "Please wait for the final update and avoid making fixed plans until confirmation is shared.\n\n"
             "Best regards,\nHR Department"
         )
     return {"subject": fallback_subject, "body": fallback_body}
@@ -184,7 +204,7 @@ You are an HR assistant drafting an internal email to Finance.
 Rules:
 - Triggered when leave is rejected.
 - Include employee name, position, leave dates, and days.
-- Include amount to deduct from salary: {leave_salary_deduction}.
+- Include amount to deduct from salary: {_format_amount(leave_salary_deduction)}.
 - Use formal, calm, and explanatory tone (not harsh).
 - Mention this is policy-based and open for HR re-evaluation if justified.
 - Output ONLY valid JSON with keys "subject" and "body".
@@ -206,7 +226,7 @@ Body:
 {email_body}
 
 HR Decision: {leave_decision}
-Salary Deduction: {leave_salary_deduction}
+Salary Deduction: {_format_amount(leave_salary_deduction)}
 """
     for attempt in range(max_retries):
         response = llm.invoke([HumanMessage(content=prompt)])
@@ -221,7 +241,7 @@ Salary Deduction: {leave_salary_deduction}
         f"Dear Finance Team,\n\n"
         f"Please note that the leave request submitted by {employee_name} ({employee_position}) "
         f"for {leave_start} to {leave_end} has been rejected as per notice policy.\n"
-        f"Recommended payroll adjustment: {leave_salary_deduction:.2f}.\n\n"
+        f"Recommended payroll adjustment: {_format_amount(leave_salary_deduction)}.\n\n"
         "Please process this in the next payroll cycle. If HR communicates a reconsideration, "
         "we will share an updated instruction.\n\nRegards,\nHR"
     )
@@ -232,11 +252,13 @@ Salary Deduction: {leave_salary_deduction}
 def draft_admin_override_email(
     employee_name: str,
     employee_position: str,
+    remaining_leaves: int | None,
     leave_start: str | None,
     leave_end: str | None,
     leave_reason: str | None,
     old_status: str,
     new_status: str,
+    leave_salary_deduction: float = 0.0,
     max_retries: int = 3
 ) -> dict:
     """
@@ -252,13 +274,22 @@ Rules:
 - Previous status: {normalized_old}
 - Updated status: {normalized_new}
 - Keep tone respectful, clear, and supportive.
-- If updated status is rejected, include a gentle line that employee can reply for clarification.
-- If updated status is approved, include reassurance and appreciation.
+- Mention remaining leaves available to the employee.
+- If updated status is rejected:
+  - include estimated payroll impact amount ({_format_amount(leave_salary_deduction)})
+  - include a gentle line that employee can reply for clarification
+  - include one line encouraging the employee to reconsider taking leave if possible.
+- If updated status is pending:
+  - ask the employee to wait for final confirmation before making fixed plans.
+- If updated status is approved:
+  - include reassurance, appreciation, and a warm "enjoy your time off" line.
+- Do not use any currency symbol in amounts. Show plain numeric amount only.
 - Output ONLY valid JSON with keys "subject" and "body".
 
 Employee:
 Name: {employee_name}
 Position: {employee_position}
+Remaining Leaves: {remaining_leaves}
 
 Leave Request:
 Start Date: {leave_start}
@@ -269,7 +300,9 @@ Reason: {leave_reason}
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content.strip()
         try:
-            return json.loads(content)
+            result = json.loads(content)
+            result["body"] = _strip_currency_symbols(result.get("body", ""))
+            return result
         except json.JSONDecodeError:
             print(f"⚠️ Override LLM JSON parse failed (attempt {attempt+1}/{max_retries}). Retrying...")
             sleep(1)
@@ -281,7 +314,8 @@ Reason: {leave_reason}
             f"After an additional admin review, your leave request ({leave_start} to {leave_end}) "
             "has been updated to approved.\n"
             f"Reason noted: {leave_reason or 'N/A'}.\n\n"
-            "Thank you for your patience.\n\n"
+            f"You currently have {remaining_leaves if remaining_leaves is not None else 'N/A'} leave(s) remaining.\n"
+            "Thank you for your patience. Please enjoy your time off and return refreshed.\n\n"
             "Best regards,\nHR Department"
         )
     elif normalized_new == "rejected":
@@ -290,6 +324,9 @@ Reason: {leave_reason}
             f"After an additional admin review, your leave request ({leave_start} to {leave_end}) "
             "has been updated to rejected.\n"
             f"Reason noted: {leave_reason or 'N/A'}.\n"
+            f"Estimated payroll impact for this period is {_format_amount(leave_salary_deduction)}.\n"
+            "If possible, we encourage you to reconsider taking leave on these dates and remain available for work.\n"
+            f"You currently have {remaining_leaves if remaining_leaves is not None else 'N/A'} leave(s) remaining.\n"
             "If you would like clarification or reconsideration, please reply to this email.\n\n"
             "Best regards,\nHR Department"
         )
@@ -298,7 +335,8 @@ Reason: {leave_reason}
             f"Dear {employee_name},\n\n"
             f"After an additional admin review, your leave request ({leave_start} to {leave_end}) "
             "has been updated and is currently pending.\n"
-            "We will share the final decision shortly.\n\n"
+            f"You currently have {remaining_leaves if remaining_leaves is not None else 'N/A'} leave(s) remaining.\n"
+            "Please wait for final confirmation before making fixed plans. We will share the final decision shortly.\n\n"
             "Best regards,\nHR Department"
         )
     return {"subject": fallback_subject, "body": fallback_body}

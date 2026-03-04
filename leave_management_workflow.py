@@ -162,11 +162,13 @@ def process_status_change_notifications(limit: int = 20):
             employee_email = draft_admin_override_email(
                 employee_name=employee.get("full_name") or "Employee",
                 employee_position=employee.get("position") or "",
+                remaining_leaves=employee.get("remaining_leaves"),
                 leave_start=leave_row.get("leave_start"),
                 leave_end=leave_row.get("leave_end"),
                 leave_reason=leave_row.get("reason"),
                 old_status=old_status,
-                new_status=new_status
+                new_status=new_status,
+                leave_salary_deduction=leave_salary_deduction,
             )
 
             employee_sent = send_email(
